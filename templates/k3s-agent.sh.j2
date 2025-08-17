@@ -1,0 +1,20 @@
+#!/bin/bash
+
+container_name=k3s-agent-{{ inventory_hostname }}
+image_name=rancher/k3s:v1.33.3-k3s1
+
+
+docker run \
+    --detach \
+    --name $container_name \
+    --hostname $container_name \
+    --network {{ k3s_swarm_net_name }} \
+    --privileged --security-opt apparmor=unconfined \
+    --volume k3s-data-${container_name}:/var/lib/rancher/k3s \
+    --env K3S_TOKEN={{ hostvars['master']['k3s_token'].stdout }} \
+    $image_name \
+    agent \
+    --server https://{{ hostvars['master']['k3s_master_ip'].stdout }}:6443 \
+    --node-name $container_name \
+    --flannel-iface=eth0
+

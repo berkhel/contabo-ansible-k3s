@@ -1,0 +1,13 @@
+#!/bin/bash
+
+container_name=k3s-server
+
+if [[ $(docker ps -a | grep "$container_name" | wc -l) -gt 0 ]]; then
+    docker stop $container_name
+    docker rm $container_name
+fi
+
+docker volume prune --force
+docker volume rm -f k3s-data-${container_name}
+sudo rm -rf /var/local/${container_name}/*
+

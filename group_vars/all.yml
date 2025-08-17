@@ -1,0 +1,7 @@
+venv_dir: /opt/docker_sdk_venv
+venv_python: "{{ venv_dir }}/bin/python"
+# swarm_cidr: "10.0.0.0/8"
+k3s_swarm_net_name: "k3s_net"
+# k3s_net_cidr: "10.1.0.0/16"
+# k3s_net_default_gateway: "10.1.0.1"
+# k3s_master_ip: "10.1.0.2"

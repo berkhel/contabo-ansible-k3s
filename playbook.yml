@@ -1,0 +1,180 @@
+- name: Install Docker and Python environment
+  hosts: all
+  become: true
+  tasks:
+
+    - name: Install required packages
+      apt:
+        name:
+          - software-properties-common
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - python3.12
+          - python3.12-venv
+        state: present
+        update_cache: yes
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: docker-ce
+        state: present
+
+    - name: Install Docker SDK and other dependencies in virtualenv
+      pip:
+        name: "{{ item }}"
+        virtualenv: "{{ venv_dir }}"
+        virtualenv_command: "/usr/bin/python3 -m venv"
+      loop:
+        - docker
+        - requests==2.31.0
+
+
+- name: Initialize Docker Swarm on master
+  hosts: overlay_master
+  become: true
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: Initialize new swarm
+      community.docker.docker_swarm:
+        advertise_addr: "{{ ansible_default_ipv4.address }}"
+        # default_addr_pool: ["{{ swarm_cidr }}"]
+        state: present
+      register: swarm_init_result
+
+    - name: Get swarm info
+      community.docker.docker_swarm_info:
+      register: swarm_facts
+
+    - name: Display swarm tokens
+      debug:
+        msg: |
+          Swarm initialized successfully!
+          Manager Token: "{{ swarm_facts.swarm_facts.JoinTokens.Manager }}"
+          Worker Token: "{{ swarm_facts.swarm_facts.JoinTokens.Worker }}"
+          Manager Address: "{{ ansible_default_ipv4.address }}:2377"
+
+    - name: Share swarm info with other hosts
+      add_host:
+        name: swarm_info
+        manager_token: "{{ swarm_facts.swarm_facts.JoinTokens.Manager }}"
+        worker_token: "{{ swarm_facts.swarm_facts.JoinTokens.Worker }}"
+        manager_addr: "{{ ansible_default_ipv4.address }}"
+
+
+    - name: Create Docker Swarm overlay network
+      community.docker.docker_network:
+        name: "{{ k3s_swarm_net_name }}"
+        driver: overlay
+        driver_options:
+          encrypted: true
+        attachable: true
+        scope: swarm
+        # ipam_config:
+        # - subnet: "{{ k3s_net_cidr }}"
+        #   gateway: "{{ k3s_net_default_gateway }}"
+        state: present
+
+    - name: Prepare Directory for K3s
+      file:
+        path: /opt/k3s
+        state: directory
+        mode: '0755'
+
+    - name: Render bash scripts for K3s
+      template:
+        src: templates/{{ item }}.j2
+        dest: /opt/k3s/{{ item }}
+        mode: '0755'
+      loop:
+        - k3s-server.sh
+        - clean-server.sh
+        - token.sh
+        - kubeconfig.sh
+
+
+    - name: Run K3s Server
+      shell: |
+        /opt/k3s/clean-server.sh
+        /opt/k3s/k3s-server.sh
+
+    - name: Get K3s Token
+      command: /opt/k3s/token.sh
+      register: k3s_token
+      until: k3s_token.rc == 0
+      retries: 3
+      delay: 1
+    - name: Show the K3s Token
+      debug:
+        msg: "TOKEN: {{ hostvars['master']['k3s_token'].stdout }}"
+
+    - name: Get KUBECONFIG
+      command: /opt/k3s/kubeconfig.sh
+      register: k3s_kubeconfig
+      until: k3s_kubeconfig.rc == 0
+      retries: 3
+      delay: 1
+    - name: Show the K3s Token
+      debug:
+        msg: "KUBECONFIG: {{ hostvars['master']['k3s_kubeconfig'].stdout }}"
+
+    - name: Get K3s master node ip
+      shell: |
+        docker exec -it k3s-server cat /etc/hosts | grep k3s-server | cut -f1
+      register: k3s_master_ip
+      until: k3s_kubeconfig.rc == 0
+      retries: 3
+      delay: 1
+    - name: Show the master node ip
+      debug:
+        msg: "Master IP: {{ hostvars['master']['k3s_master_ip'].stdout }}"
+
+- name: Join workers to Docker Swarm
+  hosts: overlay_worker
+  become: true
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+    - name: Get swarm connection info
+      set_fact:
+        worker_token: "{{ hostvars['swarm_info']['worker_token'] }}"
+        manager_addr: "{{ hostvars['swarm_info']['manager_addr'] }}"
+
+    - name: Join swarm
+      community.docker.docker_swarm:
+        state: join
+        advertise_addr: "{{ ansible_default_ipv4.address }}"
+        join_token: "{{ worker_token }}"
+        remote_addrs: ["{{ manager_addr }}:2377"]
+
+    - name: Prepare Directory for K3s
+      file:
+        path: /opt/k3s
+        state: directory
+        mode: '0755'
+    - name: Render bash scripts for K3s
+      template:
+        src: templates/{{ item }}.j2
+        dest: /opt/k3s/{{ item }}
+        mode: '0755'
+      loop:
+        - k3s-agent.sh
+        - clean-agent.sh
+
+
+    - name: Run K3s Agent
+      shell: |
+        /opt/k3s/clean-agent.sh
+        /opt/k3s/k3s-agent.sh

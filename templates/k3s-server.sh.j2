@@ -1,0 +1,26 @@
+#!/bin/bash
+
+container_name=k3s-server
+image_name=rancher/k3s:v1.33.3-k3s1
+
+
+docker run \
+    --detach \
+    --name $container_name \
+    --hostname $container_name \
+    --network {{ k3s_swarm_net_name }} \
+    --publish 6443:6443 \
+    --privileged --security-opt apparmor=unconfined \
+    --volume k3s-data-${container_name}:/var/lib/rancher/k3s \
+    $image_name \
+    server \
+    --cluster-init \
+    --node-name $container_name \
+    --flannel-backend=vxlan \
+    --tls-san {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }} \
+    --flannel-iface=eth0
+
+    # --ip $overlay_ip_address \
+    #
+    # --node-ip $overlay_ip_address \
+    # --tls-san $overlay_ip_address \
