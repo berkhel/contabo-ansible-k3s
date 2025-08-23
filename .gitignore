@@ -1,3 +1,2 @@
-inventory.yml
-kubeconfig.yml
-pods.yml
+inventory*.yml
+

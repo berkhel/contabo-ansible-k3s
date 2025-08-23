@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-ping-pod-server
+  labels:
+    app: curl-ping-server
+spec:
+  containers:
+  - name: curl-container
+    image: curlimages/curl:latest
+    command: ["sleep"]
+    args: ["3600"]
+  restartPolicy: Always
+  nodeName: k3s-server
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-ping-pod-agent1
+  labels:
+    app: curl-ping-agent1
+spec:
+  containers:
+  - name: curl-container
+    image: curlimages/curl:latest
+    command: ["sleep"]
+    args: ["3600"]
+  restartPolicy: Always
+  nodeName: k3s-agent1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: curl-ping-pod-agent2
+  labels:
+    app: curl-ping-agent2
+spec:
+  containers:
+  - name: curl-container
+    image: curlimages/curl:latest
+    command: ["sleep"]
+    args: ["3600"]
+  restartPolicy: Always
+  nodeName: k3s-agent2

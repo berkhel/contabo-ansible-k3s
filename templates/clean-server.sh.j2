@@ -1,6 +1,6 @@
 #!/bin/bash
 
-container_name=k3s-server
+container_name={{ k3s_server_node_name }}
 
 if [[ $(docker ps -a | grep "$container_name" | wc -l) -gt 0 ]]; then
     docker stop $container_name

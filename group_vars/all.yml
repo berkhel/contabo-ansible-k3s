@@ -1,7 +1,13 @@
+global_python: "/usr/bin/python3"
 venv_dir: /opt/docker_sdk_venv
 venv_python: "{{ venv_dir }}/bin/python"
-# swarm_cidr: "10.0.0.0/8"
+k3s_image: "rancher/k3s:v1.33.3-k3s1"
 k3s_swarm_net_name: "k3s_net"
-# k3s_net_cidr: "10.1.0.0/16"
-# k3s_net_default_gateway: "10.1.0.1"
-# k3s_master_ip: "10.1.0.2"
+k3s_server_node_name: "k3s-server"
+k3s_hosts_pwd: "/opt/k3s"
+swarm_addr_pool: "10.128.0.0/9"
+swarm_networks_mask: 24
+k3s_swarm_net_mtu: 1450
+ipsec_esp_header: 28
+vxlan_header: 50
+k3s_cni_flannel_mtu: "{{ k3s_swarm_net_mtu - ipsec_esp_header - 2 * vxlan_header }}" 

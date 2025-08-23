@@ -1,180 +1,364 @@
 - name: Install Docker and Python environment
   hosts: all
+  any_errors_fatal: true
   become: true
+  tags: always
   tasks:
 
-    - name: Install required packages
+    - name: <APT> Install required packages
       apt:
         name:
-          - software-properties-common
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - python3.12
-          - python3.12-venv
+          - software-properties-common=0.99.49.3
+          - apt-transport-https=2.8.3
+          - ca-certificates=20240203
+          - curl=8.5.0-2ubuntu10.6
+          - python3=3.12.3-0ubuntu2
+          - python3-venv=3.12.3-0ubuntu2
         state: present
-        update_cache: yes
+        update-cache: true
 
-    - name: Add Docker GPG key
+    - name: <APT> Add Docker GPG key
       apt_key:
         url: https://download.docker.com/linux/ubuntu/gpg
         state: present
 
-    - name: Add Docker repository
+    - name: <APT> Add Docker repository
       apt_repository:
-        repo: deb https://download.docker.com/linux/ubuntu focal stable
+        repo: deb https://download.docker.com/linux/ubuntu noble stable
         state: present
 
-    - name: Install Docker
+    - name: <APT> Install Docker
       apt:
-        name: docker-ce
+        name: docker-ce=5:28.3.3-1~ubuntu.24.04~noble
         state: present
 
-    - name: Install Docker SDK and other dependencies in virtualenv
+    - name: <PIP> Install Docker SDK and other dependencies in virtualenv
       pip:
         name: "{{ item }}"
         virtualenv: "{{ venv_dir }}"
-        virtualenv_command: "/usr/bin/python3 -m venv"
+        virtualenv_command: "{{ global_python }} -m venv"
       loop:
-        - docker
+        - docker==7.1.0
         - requests==2.31.0
 
 
-- name: Initialize Docker Swarm on master
-  hosts: overlay_master
+- name: <K3S:AGENT> Remove old container
+  hosts: agent
+  serial: 1
+  any_errors_fatal: true
   become: true
+  tags: [ k3s, clean ]
+  tasks:
+
+    - name: <K3S:AGENT> Prepare directory
+      file:
+        path: "{{ k3s_hosts_pwd }}"
+        state: directory
+        mode: '0755'
+
+    - name: <K3S:AGENT> Render clean script
+      template:
+        src: templates/clean-agent.sh.j2
+        dest: "{{ k3s_hosts_pwd }}/clean-agent.sh"
+        mode: '0755'
+
+    - name: <K3S:AGENT> Clean agent
+      command: "{{ k3s_hosts_pwd }}/clean-agent.sh"
+
+
+- name: <K3S:SERVER> Remove old K3s container
+  hosts: master
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ k3s, clean ]
+  tasks:
+
+    - name: <K3S:SERVER> Prepare directory
+      file:
+        path: "{{ k3s_hosts_pwd }}"
+        state: directory
+        mode: '0755'
+
+    - name: <K3S:SERVER> Render clean script
+      template:
+        src: templates/clean-server.sh.j2
+        dest: "{{ k3s_hosts_pwd }}/clean-server.sh"
+        mode: '0755'
+
+    - name: <K3S:SERVER> Clean server
+      command: "{{ k3s_hosts_pwd }}/clean-server.sh"
+
+
+- name: <SWARM:MANAGER> Print Old Swarm Info
+  hosts: master
+  become: true
+  tags: [ swarm, clean, debug ]
   vars:
     ansible_python_interpreter: "{{ venv_python }}"
   tasks:
 
-    - name: Initialize new swarm
+    - name: <SWARM:MANAGER> Get Docker info
+      community.docker.docker_host_info:
+      register: docker_info
+
+    - name: <SWARM:MANAGER> Display Docker info
+      debug:
+        var: docker_info
+
+    - name: <SWARM:MANAGER> Set fact for Swarm manager status
+      set_fact:
+        is_swarm_manager: "{{ docker_info.host_info.Swarm.ControlAvailable | default(false) }}"
+
+    - name: <SWARM:MANAGER> Get overlay network info
+      community.docker.docker_network_info:
+        name: "{{ k3s_swarm_net_name }}"
+      register: k3s_net
+
+    - name: <SWARM:MANAGER> Print info about k3s network
+      debug:
+        var: k3s_net.network
+      when: k3s_net.exists
+
+    - name: <SWARM:MANAGER> Get info on the swarm
+      community.docker.docker_node_info:
+      register: swarm_info
+      when: is_swarm_manager
+
+    - name: <SWARM:MANAGER> Get info on all swarm nodes
+      community.docker.docker_node_info:
+      register: nodes
+      when: is_swarm_manager 
+
+    - name: <SWARM:MANAGER> Print info about swarm nodes
+      debug:
+        msg: "{{ nodes.nodes | json_query('[].{ID: ID, Spec: Spec, Status: Status, ManagerStatus: ManagerStatus}') }}"
+      when: is_swarm_manager 
+
+
+- name: <SWARM:MANAGER> Tear down overlay network
+  hosts: master
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ swarm, clean ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:MANAGER> Remove overlay network
+      community.docker.docker_network:
+        name: "{{ k3s_swarm_net_name }}"
+        state: absent
+
+
+- name: <SWARM:WORKER> Tear down old Docker Swarm
+  hosts: agent
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ swarm, clean ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:WORKER> Leave old swarm
       community.docker.docker_swarm:
-        advertise_addr: "{{ ansible_default_ipv4.address }}"
-        # default_addr_pool: ["{{ swarm_cidr }}"]
+        state: absent
+        force: true
+
+
+- name: <SWARM:MANAGER> Tear down old Docker Swarm
+  hosts: master
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ swarm, clean ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:MANAGER> Leave old swarm
+      community.docker.docker_swarm:
+        state: absent
+        force: true
+
+
+- name: <SWARM:MANAGER> Initialize Docker Swarm
+  hosts: master
+  serial: 1
+  become: true
+  tags: [ swarm, deploy ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:MANAGER> Initialize new swarm
+      community.docker.docker_swarm:
+        advertise_addr: "{{ ansible_eth1.ipv4.address }}"
+        data_path_addr: "{{ ansible_eth1.ipv4.address }}"
+        default_addr_pool: ["{{ swarm_addr_pool }}"]
+        subnet_size: "{{ swarm_networks_mask }}"
         state: present
       register: swarm_init_result
 
-    - name: Get swarm info
+    - name: <SWARM:MANAGER> Get swarm info
       community.docker.docker_swarm_info:
       register: swarm_facts
-
-    - name: Display swarm tokens
+    
+    - name: <SWARM:MANAGER> Display new swarm info
       debug:
-        msg: |
-          Swarm initialized successfully!
-          Manager Token: "{{ swarm_facts.swarm_facts.JoinTokens.Manager }}"
-          Worker Token: "{{ swarm_facts.swarm_facts.JoinTokens.Worker }}"
-          Manager Address: "{{ ansible_default_ipv4.address }}:2377"
+        msg: "{{ swarm_facts }}"
+      tags: [ debug ]
 
-    - name: Share swarm info with other hosts
+    - name: <SWARM:MANAGER> Display swarm tokens
+      debug:
+        msg:
+          - "Manager Token: {{ swarm_facts.swarm_facts.JoinTokens.Manager }}"
+          - "Worker Token: {{ swarm_facts.swarm_facts.JoinTokens.Worker }}"
+          - "Manager Address: {{ ansible_eth1.ipv4.address }}:2377"
+      tags: [ debug ]
+
+    - name: <SWARM:MANAGER> Share swarm info with other hosts
       add_host:
-        name: swarm_info
+        name: swarm
         manager_token: "{{ swarm_facts.swarm_facts.JoinTokens.Manager }}"
         worker_token: "{{ swarm_facts.swarm_facts.JoinTokens.Worker }}"
-        manager_addr: "{{ ansible_default_ipv4.address }}"
+        manager_addr: "{{ ansible_eth1.ipv4.address }}"
 
 
-    - name: Create Docker Swarm overlay network
+- name: <SWARM:WORKER> Join workers to Docker Swarm
+  hosts: agent
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ swarm, deploy ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:WORKER> Join swarm
+      community.docker.docker_swarm:
+        state: join
+          # advertise_addr: "{{ ansible_eth1.ipv4.address }}"
+          # data_path_addr: "{{ ansible_eth1.ipv4.address }}"
+        join_token: "{{ hostvars['swarm']['worker_token'] }}"
+        remote_addrs: ["{{ hostvars['swarm']['manager_addr'] }}:2377"]
+
+
+- name: <SWARM:MANAGER> Create Docker Swarm overlay network
+  hosts: master
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ swarm, deploy ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <SWARM:MANAGER> Create overlay network
       community.docker.docker_network:
         name: "{{ k3s_swarm_net_name }}"
         driver: overlay
         driver_options:
           encrypted: true
+          com.docker.network.driver.mtu: "{{ k3s_swarm_net_mtu }}"
         attachable: true
         scope: swarm
-        # ipam_config:
-        # - subnet: "{{ k3s_net_cidr }}"
-        #   gateway: "{{ k3s_net_default_gateway }}"
         state: present
 
-    - name: Prepare Directory for K3s
+- name: <K3S:SERVER> Initialize K3S cluster 
+  hosts: master
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tags: [ k3s, deploy ]
+  vars:
+    ansible_python_interpreter: "{{ venv_python }}"
+  tasks:
+
+    - name: <K3S:SERVER> Prepare directory
       file:
-        path: /opt/k3s
+        path: "{{ k3s_hosts_pwd }}"
         state: directory
         mode: '0755'
 
-    - name: Render bash scripts for K3s
+    - name: <K3S:SERVER> Render bash scripts
       template:
-        src: templates/{{ item }}.j2
-        dest: /opt/k3s/{{ item }}
+        src: "templates/{{ item }}.j2"
+        dest: "{{ k3s_hosts_pwd }}/{{ item }}"
         mode: '0755'
       loop:
         - k3s-server.sh
-        - clean-server.sh
         - token.sh
         - kubeconfig.sh
+        - 10-flannel.conflist
 
+    - name: <K3S:SERVER> Run server
+      command: "{{ k3s_hosts_pwd }}/k3s-server.sh"
 
-    - name: Run K3s Server
-      shell: |
-        /opt/k3s/clean-server.sh
-        /opt/k3s/k3s-server.sh
-
-    - name: Get K3s Token
-      command: /opt/k3s/token.sh
+    - name: <K3S:SERVER> Get token
+      command: "{{ k3s_hosts_pwd }}/token.sh"
       register: k3s_token
       until: k3s_token.rc == 0
-      retries: 3
+      retries: 9
       delay: 1
-    - name: Show the K3s Token
-      debug:
-        msg: "TOKEN: {{ hostvars['master']['k3s_token'].stdout }}"
 
-    - name: Get KUBECONFIG
-      command: /opt/k3s/kubeconfig.sh
+    - name: <K3S:SERVER> Get kubeconfig.yml
+      command: "{{ k3s_hosts_pwd }}/kubeconfig.sh"
       register: k3s_kubeconfig
       until: k3s_kubeconfig.rc == 0
       retries: 3
       delay: 1
-    - name: Show the K3s Token
-      debug:
-        msg: "KUBECONFIG: {{ hostvars['master']['k3s_kubeconfig'].stdout }}"
 
-    - name: Get K3s master node ip
+    - name: <K3S:SERVER> Generate kubeconfig.yml locally
+      vars:
+        ansible_python_interpreter: "{{ global_python }}"
+      copy:
+        content: "{{ k3s_kubeconfig.stdout | regex_replace('\\d{1,3}(\\.\\d{1,3}){3}', ansible_eth1.ipv4.address) }}"
+        dest: "./kubeconfig.yml"
+      delegate_to: localhost
+      become: false
+
+    - name: <K3S:SERVER> Get server node ip
       shell: |
-        docker exec -it k3s-server cat /etc/hosts | grep k3s-server | cut -f1
+        docker exec {{ k3s_server_node_name }} cat /etc/hosts | grep {{ k3s_server_node_name }} | cut -f1
       register: k3s_master_ip
       until: k3s_kubeconfig.rc == 0
       retries: 3
       delay: 1
-    - name: Show the master node ip
-      debug:
-        msg: "Master IP: {{ hostvars['master']['k3s_master_ip'].stdout }}"
 
-- name: Join workers to Docker Swarm
-  hosts: overlay_worker
+    - name: <K3S:SERVER> Share K3s info with other hosts
+      add_host:
+        name: k3s
+        server_node_ip: "{{ k3s_master_ip }}"
+        token: "{{ k3s_token }}"
+
+
+- name: <K3S:AGENT> Join K3S as agent node
+  hosts: agent
+  serial: 1
+  any_errors_fatal: true
   become: true
+  tags: [ k3s, deploy ]
   vars:
     ansible_python_interpreter: "{{ venv_python }}"
   tasks:
-    - name: Get swarm connection info
-      set_fact:
-        worker_token: "{{ hostvars['swarm_info']['worker_token'] }}"
-        manager_addr: "{{ hostvars['swarm_info']['manager_addr'] }}"
-
-    - name: Join swarm
-      community.docker.docker_swarm:
-        state: join
-        advertise_addr: "{{ ansible_default_ipv4.address }}"
-        join_token: "{{ worker_token }}"
-        remote_addrs: ["{{ manager_addr }}:2377"]
-
-    - name: Prepare Directory for K3s
+  
+    - name: <K3S:AGENT> Prepare directory
       file:
-        path: /opt/k3s
+        path: "{{ k3s_hosts_pwd }}"
         state: directory
         mode: '0755'
-    - name: Render bash scripts for K3s
+
+    - name: <K3S:AGENT> Render bash scripts
       template:
         src: templates/{{ item }}.j2
-        dest: /opt/k3s/{{ item }}
+        dest: "{{ k3s_hosts_pwd }}/{{ item }}"
         mode: '0755'
       loop:
         - k3s-agent.sh
-        - clean-agent.sh
+        - 10-flannel.conflist
 
-
-    - name: Run K3s Agent
-      shell: |
-        /opt/k3s/clean-agent.sh
-        /opt/k3s/k3s-agent.sh
+    - name: <K3S:AGENT> Run agent
+      command: "{{ k3s_hosts_pwd }}/k3s-agent.sh"

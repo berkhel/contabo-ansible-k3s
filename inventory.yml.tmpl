@@ -1,0 +1,23 @@
+all:
+  hosts:
+    master1:
+      ansible_host: ???
+      ansible_user: ???
+      ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    agent1:
+      ansible_host: ???
+      ansible_user: ???
+      ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    agent2:
+      ansible_host: ???
+      ansible_user: ???
+      ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+  children:
+    master:
+      hosts:
+        master1:
+    agent:
+      hosts:
+        agent1:
+        agent2:

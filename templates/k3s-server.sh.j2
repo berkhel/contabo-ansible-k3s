@@ -1,7 +1,9 @@
 #!/bin/bash
 
-container_name=k3s-server
-image_name=rancher/k3s:v1.33.3-k3s1
+container_name={{ k3s_server_node_name }}
+image_name={{ k3s_image }}
+host_ip={{ ansible_eth1.ipv4.address }}
+
 
 
 docker run \
@@ -9,18 +11,16 @@ docker run \
     --name $container_name \
     --hostname $container_name \
     --network {{ k3s_swarm_net_name }} \
-    --publish 6443:6443 \
+    --publish {{ ansible_eth1.ipv4.address }}:6443:6443 \
+    --publish {{ ansible_eth1.ipv4.address }}:443:443 \
     --privileged --security-opt apparmor=unconfined \
+    --volume {{ k3s_hosts_pwd }}/10-flannel.conflist:/etc/cni/net.d/10-flannel.conflist \
     --volume k3s-data-${container_name}:/var/lib/rancher/k3s \
     $image_name \
     server \
     --cluster-init \
     --node-name $container_name \
+    --tls-san $host_ip \
     --flannel-backend=vxlan \
-    --tls-san {{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }} \
-    --flannel-iface=eth0
-
-    # --ip $overlay_ip_address \
-    #
-    # --node-ip $overlay_ip_address \
-    # --tls-san $overlay_ip_address \
+    --flannel-iface=eth0 \
+    --flannel-cni-conf=/etc/cni/net.d/10-flannel.conflist

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-container_name=k3s-agent-{{ inventory_hostname }}
+container_name=k3s-{{ inventory_hostname }}
 
 if [[ $(docker ps -a | grep "$container_name" | wc -l) -gt 0 ]]; then
     docker stop $container_name
