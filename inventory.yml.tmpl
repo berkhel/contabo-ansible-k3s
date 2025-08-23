@@ -1,23 +1,28 @@
 all:
   hosts:
-    master1:
+    master:
+      ansible_host: ??? 
+      ansible_user: ???
+      ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    gateway:
       ansible_host: ???
       ansible_user: ???
       ansible_ssh_private_key_file: ~/.ssh/id_rsa
-    agent1:
+    agent:
       ansible_host: ???
       ansible_user: ???
       ansible_ssh_private_key_file: ~/.ssh/id_rsa
-    agent2:
+    storage:
       ansible_host: ???
       ansible_user: ???
       ansible_ssh_private_key_file: ~/.ssh/id_rsa
 
   children:
-    master:
+    overlay_master:
       hosts:
-        master1:
-    agent:
+        master:
+    overlay_worker:
       hosts:
-        agent1:
-        agent2:
+        gateway:
+        agent:
+        storage:
